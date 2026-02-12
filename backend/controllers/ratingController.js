@@ -15,15 +15,27 @@ const updateStoreAverage = async (storeId) => {
   ]);
 
   if (stats.length > 0) {
+    const avgRating = parseFloat(stats[0].avgRating.toFixed(1));
+    const totalRatings = stats[0].total;
+    
     await Store.findByIdAndUpdate(storeId, {
-      averageRating: stats[0].avgRating.toFixed(1),
-      totalRatings: stats[0].total,
+      averageRating: avgRating,
+      totalRatings: totalRatings,
     });
+    
+    return {
+      averageRating: avgRating,
+      totalRatings: totalRatings,
+    };
   } else {
     await Store.findByIdAndUpdate(storeId, {
       averageRating: 0,
       totalRatings: 0,
     });
+    return {
+      averageRating: 0,
+      totalRatings: 0,
+    };
   }
 };
 
@@ -61,13 +73,14 @@ const submitOrUpdateRating = async (req, res, next) => {
       });
     }
 
-    await updateStoreAverage(storeId);
+    const updatedStats = await updateStoreAverage(storeId);
 
     res.json({
       success: true,
       message: existingRating
         ? 'Rating updated successfully'
         : 'Rating submitted successfully',
+      stats: updatedStats,
     });
   } catch (error) {
     next(error);
@@ -89,14 +102,20 @@ const getStoreRatings = async (req, res, next) => {
       .populate('user', 'name email')
       .sort({ createdAt: -1 });
 
+    // Recalculate to ensure fresh data
+    await updateStoreAverage(storeId);
+    const updatedStore = await Store.findById(storeId);
+
     res.json({
       store: {
-        _id: store._id,
-        name: store.name,
-        averageRating: store.averageRating,
-        totalRatings: store.totalRatings,
+        _id: updatedStore._id,
+        name: updatedStore.name,
+        email: updatedStore.email,
+        averageRating: updatedStore.averageRating || 0,
+        totalRatings: updatedStore.totalRatings || 0,
       },
       ratings,
+      totalRatings: updatedStore.totalRatings || 0,
     });
   } catch (error) {
     next(error);
@@ -117,9 +136,25 @@ const getMyStoreRatings = async (req, res, next) => {
       .populate('user', 'name email')
       .sort({ createdAt: -1 });
 
+    // Get the actual count from ratings array as backup
+    const actualCount = ratings.length;
+
+    // Recalculate to ensure accuracy
+    await updateStoreAverage(store._id);
+    
+    // Fetch updated store data
+    const updatedStore = await Store.findById(store._id);
+
     res.json({
-      store,
+      store: {
+        _id: updatedStore._id,
+        name: updatedStore.name,
+        email: updatedStore.email,
+        averageRating: updatedStore.averageRating || 0,
+        totalRatings: updatedStore.totalRatings || actualCount,
+      },
       ratings,
+      totalRatings: updatedStore.totalRatings || actualCount,
     });
   } catch (error) {
     next(error);
@@ -132,11 +167,20 @@ const getPublicStoreRatings = async (req, res, next) => {
   try {
     const { storeId } = req.params;
 
+    const store = await Store.findById(storeId);
+    if (!store) {
+      return res.status(404).json({ message: 'Store not found' });
+    }
+
     const ratings = await Rating.find({ store: storeId })
       .populate('user', 'name')
       .sort({ createdAt: -1 });
 
-    res.json(ratings);
+    res.json({
+      ratings,
+      averageRating: store.averageRating || 0,
+      totalRatings: store.totalRatings || ratings.length,
+    });
   } catch (error) {
     next(error);
   }
